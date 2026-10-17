@@ -1,0 +1,34 @@
+name: cinnamon_edge
+description: Offline cinnamon bark quality research prototype
+publish_to: none
+version: 0.1.0+1
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_onnxruntime: ^1.9.0
+  image_picker: ^1.1.2
+  image: ^4.3.0
+  path_provider: ^2.1.5
+  share_plus: ^10.1.4
+  cross_file: ^0.3.4
+  crypto: ^3.0.7
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/models/
+dev_dependencies:
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icons/app_icon_opaque.png"
+  adaptive_icon_background: "#F8F8F8"
+  adaptive_icon_foreground: "assets/icons/adaptive_foreground.png"
+  windows:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+    icon_size: 48
+

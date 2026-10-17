@@ -1,0 +1,62 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+Thumbs.db
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# Local research prediction CSVs (keep repository clean)
+*.csv
+
+# IntelliJ & IDEs
+*.iml
+*.ipr
+*.iws
+.idea/
+.vscode/
+
+# Flutter / Dart / Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+**/build/
+
+# Android generated files
+**/android/.gradle/
+**/android/local.properties
+**/android/captures/
+**/android/gradleBuild/
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/android/app/build/
+
+# iOS / macOS generated files
+**/ios/Pods/
+**/ios/.symlinks/
+**/macos/Pods/
+
+# Windows desktop generated files
+**/windows/flutter/ephemeral/
+
+# Symbolication & Obfuscation
+app.*.symbols
+app.*.map.json
+
+# Explicitly ensure AI models and assets are tracked
+!assets/
+!assets/models/
+!assets/models/*.onnx
+!assets/icons/
