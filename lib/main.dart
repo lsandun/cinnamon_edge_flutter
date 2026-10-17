@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'widgets/scan_animation.dart';
+import 'widgets/bulk_analysis_view.dart';
 
 const List<String> kClasses = [
   'extra_special',
@@ -750,7 +751,9 @@ class _CinnamonHomeState extends State<CinnamonHome> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
       backgroundColor: const Color(0xFFF7F9F6),
       appBar: AppBar(
         elevation: 0,
@@ -884,8 +887,63 @@ class _CinnamonHomeState extends State<CinnamonHome> {
             ),
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(48),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F3EF),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: TabBar(
+              indicatorSize: TabBarIndicatorSize.tab,
+              indicator: BoxDecoration(
+                color: const Color(0xFF1B4D3E),
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF1B4D3E).withValues(alpha: 0.2),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              labelColor: Colors.white,
+              unselectedLabelColor: const Color(0xFF4A554D),
+              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              dividerColor: Colors.transparent,
+              tabs: const [
+                Tab(
+                  iconMargin: EdgeInsets.zero,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.camera_alt, size: 16),
+                      SizedBox(width: 8),
+                      Text('Single Tree Scan'),
+                    ],
+                  ),
+                ),
+                Tab(
+                  iconMargin: EdgeInsets.zero,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.auto_awesome_motion, size: 16),
+                      SizedBox(width: 8),
+                      Text('Batch Analysis (Bulk)'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
-      body: ListView(
+      body: TabBarView(
+        children: [
+          ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         children: [
           // Model loading / error banner
@@ -1576,7 +1634,21 @@ class _CinnamonHomeState extends State<CinnamonHome> {
           const SizedBox(height: 20),
         ],
       ),
-    );
+
+      // Tab 2: Batch Analysis (Bulk Inspection for 10 - 900+ Trees)
+      BulkAnalysisView(
+        engine: _engine,
+        isModelLoaded: _isModelLoaded,
+        onAppendToGlobalCsv: (row) {
+          _csvRows.add(row);
+          _savedRowCount++;
+          if (mounted) setState(() {});
+        },
+      ),
+    ],
+  ),
+),
+);
   }
 
   Widget _buildTimingCard(String title, String value, IconData icon, {bool highlight = false}) {
