@@ -1,4 +1,5 @@
-import 'dart:io' show File;
+import 'dart:convert' show utf8;
+import 'dart:io' show File, Directory;
 import 'dart:math' as math;
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -479,18 +480,271 @@ class _CinnamonHomeState extends State<CinnamonHome> {
     }
   }
 
-  Future<void> _shareCsv() async {
-    if (_csvFilePath == null && _csvRows.length <= 1) return;
-    if (kIsWeb) {
-      await Share.share(
-        _csvRows.join('\n'),
-        subject: 'Cinnamon Edge Research Predictions (Field Trial)',
+  Future<void> _downloadOrSaveCsv() async {
+    if (_csvRows.length <= 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No predictions saved to download yet.'),
+          backgroundColor: Colors.orange,
+        ),
       );
       return;
     }
-    await Share.shareXFiles(
-      [XFile(_csvFilePath!)],
-      text: 'Cinnamon Edge Research Predictions (Field Trial)',
+
+    final csvContent = '${_csvRows.join('\n')}\n';
+    final timestamp = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+    final fileName = 'cinnamon_edge_predictions_$timestamp.csv';
+
+    try {
+      if (kIsWeb) {
+        final bytes = utf8.encode(csvContent);
+        final xFile = XFile.fromData(
+          Uint8List.fromList(bytes),
+          mimeType: 'text/csv',
+          name: fileName,
+        );
+        await Share.shareXFiles(
+          [xFile],
+          text: 'Cinnamon Edge Research Predictions (Field Trial)',
+          fileNameOverrides: [fileName],
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_outline, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('Downloaded "$fileName"')),
+                ],
+              ),
+              backgroundColor: const Color(0xFF1B4D3E),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+
+      // On Mobile / Desktop: Save to Downloads folder or App Documents
+      Directory? targetDir;
+      try {
+        targetDir = await getDownloadsDirectory();
+      } catch (_) {}
+      targetDir ??= await getApplicationDocumentsDirectory();
+
+      final file = File('${targetDir.path}/$fileName');
+      await file.writeAsString(csvContent);
+      _csvFilePath = file.path;
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Saved to: ${file.path}')),
+              ],
+            ),
+            backgroundColor: const Color(0xFF1B4D3E),
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'SHARE',
+              textColor: Colors.white,
+              onPressed: _shareCsv,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving CSV: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _shareCsv() async {
+    if (_csvRows.length <= 1) return;
+    final csvContent = '${_csvRows.join('\n')}\n';
+    final timestamp = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+    final fileName = 'cinnamon_edge_predictions_$timestamp.csv';
+
+    try {
+      if (kIsWeb) {
+        final bytes = utf8.encode(csvContent);
+        final xFile = XFile.fromData(
+          Uint8List.fromList(bytes),
+          mimeType: 'text/csv',
+          name: fileName,
+        );
+        await Share.shareXFiles(
+          [xFile],
+          text: 'Cinnamon Edge Research Predictions (Field Trial)',
+          fileNameOverrides: [fileName],
+        );
+        return;
+      }
+
+      if (_csvFilePath == null || !File(_csvFilePath!).existsSync()) {
+        final dir = await getApplicationDocumentsDirectory();
+        final file = File('${dir.path}/$fileName');
+        await file.writeAsString(csvContent);
+        _csvFilePath = file.path;
+      }
+
+      await Share.shareXFiles(
+        [XFile(_csvFilePath!)],
+        text: 'Cinnamon Edge Research Predictions (Field Trial)',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Share error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _showCsvPreviewDialog() {
+    final csvContent = '${_csvRows.join('\n')}\n';
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.72,
+          maxChildSize: 0.94,
+          minChildSize: 0.4,
+          builder: (context, scrollController) {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'CSV Research Report Data',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1B4D3E),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    '$_savedRowCount records logged. You can copy raw CSV text or save as a file.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F9FA),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: SingleChildScrollView(
+                        controller: scrollController,
+                        scrollDirection: Axis.vertical,
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: SelectableText(
+                            csvContent,
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 11,
+                              color: Color(0xFF222222),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Clipboard.setData(ClipboardData(text: csvContent));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('CSV copied to clipboard! Paste directly into Excel or Sheets.'),
+                                backgroundColor: Color(0xFF1B4D3E),
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                            Navigator.pop(context);
+                          },
+                          icon: const Icon(Icons.copy, size: 18),
+                          label: const Text('Copy Data'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF1B4D3E),
+                            side: const BorderSide(color: Color(0xFF1B4D3E)),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _downloadOrSaveCsv();
+                          },
+                          icon: const Icon(Icons.download, size: 18),
+                          label: const Text('Save File'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF1B4D3E),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1244,29 +1498,64 @@ class _CinnamonHomeState extends State<CinnamonHome> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  if (_csvFilePath != null)
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _shareCsv,
-                        icon: const Icon(Icons.share, color: Color(0xFF1B4D3E)),
-                        label: const Text(
-                          'Share CSV Report',
-                          style: TextStyle(color: Color(0xFF1B4D3E), fontWeight: FontWeight.bold),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0xFF1B4D3E)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
+                  if (_savedRowCount > 0 || _csvRows.length > 1) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: _downloadOrSaveCsv,
+                            icon: const Icon(Icons.file_download, size: 18),
+                            label: const Text(
+                              'Download CSV',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF1B4D3E),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _shareCsv,
+                            icon: const Icon(Icons.share, size: 18, color: Color(0xFF1B4D3E)),
+                            label: const Text(
+                              'Share CSV',
+                              style: TextStyle(color: Color(0xFF1B4D3E), fontWeight: FontWeight.bold),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFF1B4D3E)),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton.icon(
+                        onPressed: _showCsvPreviewDialog,
+                        icon: const Icon(Icons.copy_all, size: 16),
+                        label: const Text('View & Copy Raw CSV Data'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFF1B4D3E),
+                        ),
                       ),
-                    )
-                  else
+                    ),
+                  ] else ...[
                     Text(
-                      'Save at least one prediction to generate and share the CSV report.',
+                      'Save at least one prediction to generate, download, and share the CSV report.',
                       style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500),
                     ),
+                  ],
                 ],
               ),
             ),
