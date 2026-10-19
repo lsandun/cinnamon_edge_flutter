@@ -228,21 +228,7 @@ class _BulkAnalysisViewState extends State<BulkAnalysisView> {
 
           // Optionally notify global logger
           if (widget.onAppendToGlobalCsv != null) {
-            final csvLine = [
-              DateTime.now().toUtc().toIso8601String(),
-              result.imageFingerprint,
-              fileName,
-              'REAL_ONNX_RUNTIME',
-              result.label,
-              result.confidence.toStringAsFixed(6),
-              result.accepted,
-              result.preprocessMs,
-              result.inferenceMs,
-              result.totalMs,
-              '',
-              '',
-              ...result.probs.map((p) => p.toStringAsFixed(6)),
-            ].map((v) => '"${v.toString().replaceAll('"', '""')}"').join(',');
+            final csvLine = result.csvRow(fileName);
             widget.onAppendToGlobalCsv!(csvLine);
           }
         } catch (e) {
@@ -322,29 +308,9 @@ class _BulkAnalysisViewState extends State<BulkAnalysisView> {
 
   // --- CSV Export for Batch Analysis ---
   String _generateBatchCsvContent() {
-    final rows = [
-      'timestamp_utc,image_fingerprint,image,runtime_mode,grade,confidence,accepted,preprocess_ms,inference_ms,total_ms,prob_extra,prob_high,prob_low,prob_medium'
-    ];
-
-    String esc(dynamic s) => '"${s.toString().replaceAll('"', '""')}"';
-
+    final rows = [Result.csvHeader];
     for (final item in _batchItems) {
-      if (item.result != null) {
-        final r = item.result!;
-        rows.add([
-          esc(item.processedAt.toUtc().toIso8601String()),
-          esc(r.imageFingerprint),
-          esc(item.fileName),
-          'REAL_ONNX_RUNTIME',
-          esc(r.label),
-          r.confidence.toStringAsFixed(6),
-          r.accepted,
-          r.preprocessMs.toString(),
-          r.inferenceMs.toString(),
-          r.totalMs.toString(),
-          ...r.probs.map((v) => v.toStringAsFixed(6)),
-        ].join(','));
-      }
+      if (item.result != null) rows.add(item.result!.csvRow(item.fileName));
     }
     return '${rows.join('\n')}\n';
   }
@@ -518,8 +484,11 @@ class _BulkAnalysisViewState extends State<BulkAnalysisView> {
               ),
               const SizedBox(height: 14),
 
+              Text('Original: ${kClassDisplayNames[r.rawLabel]} (${(r.rawConfidence * 100).toStringAsFixed(1)}%)'),
+              Text('Corrected: ${kClassDisplayNames[r.correctedLabel]} (${(r.correctedConfidence * 100).toStringAsFixed(1)}%)'),
+              Text('Final grade uses ${r.biasEnabled ? "corrected" : "original"} probabilities. Confidence is not accuracy.'),
               // Probabilities
-              const Text('Class Probability Breakdown:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              const Text('Probabilities: Original / Corrected:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
               const SizedBox(height: 8),
               ...List.generate(4, (idx) {
                 final c = kClasses[idx];
@@ -533,7 +502,7 @@ class _BulkAnalysisViewState extends State<BulkAnalysisView> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(kClassDisplayNames[c] ?? c, style: TextStyle(fontSize: 11.5, fontWeight: isTop ? FontWeight.bold : FontWeight.normal)),
-                          Text('${(prob * 100).toStringAsFixed(1)}%', style: TextStyle(fontSize: 11.5, fontWeight: isTop ? FontWeight.bold : FontWeight.normal)),
+                          Text('${(r.rawProbs[idx] * 100).toStringAsFixed(1)}% / ${(r.correctedProbs[idx] * 100).toStringAsFixed(1)}%', style: TextStyle(fontSize: 11.5, fontWeight: isTop ? FontWeight.bold : FontWeight.normal)),
                         ],
                       ),
                       const SizedBox(height: 2),
@@ -650,7 +619,7 @@ class _BulkAnalysisViewState extends State<BulkAnalysisView> {
                       onPressed: _isProcessing ? null : _pickAndProcessImages,
                       icon: const Icon(Icons.add_photo_alternate, size: 20),
                       label: Text(
-                        _isProcessing ? 'Processing Batch...' : 'Select Photos (තොග ඡායාරූප)',
+                        _isProcessing ? 'Processing Batch...' : 'Select Photos',
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
                       ),
                       style: ElevatedButton.styleFrom(

@@ -1,3 +1,9 @@
+# CinnaGrade AI — research prototype
+
+The current repository includes the clean-dataset ONNX model and SHA-bound deployment manifest. Extra Special log-bias 0.6 defaults ON for this model; original and corrected probabilities, paired evaluation, and research CSV exports are implemented. See [model deployment and validation](MODEL_DEPLOYMENT.md) for current behavior, checks, and limitations.
+
+The historical setup notes below refer to the earlier source ZIP. Their missing-model warning and temperature calibration do not describe the current bundled deployment.
+
 # Cinnamon Edge AI — Flutter prototype
 
 **Important:** This ZIP contains Flutter source code; it intentionally does NOT contain the user's private 20.34 MB ONNX model. It has not been built on a local Android device in this environment. Dart/plugin compatibility and ONNX I/O must be checked on the user's system before a working-device claim.

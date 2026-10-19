@@ -1,4 +1,4 @@
-import 'dart:convert' show utf8;
+import 'dart:convert' show utf8, jsonDecode;
 import 'dart:io' show File, Directory;
 import 'dart:math' as math;
 import 'package:crypto/crypto.dart';
@@ -10,15 +10,10 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'research_prediction.dart';
+export 'research_prediction.dart';
 import 'widgets/scan_animation.dart';
 import 'widgets/bulk_analysis_view.dart';
-
-const List<String> kClasses = [
-  'extra_special',
-  'high_quality',
-  'low_quality',
-  'medium_quality',
-];
 
 const Map<String, String> kClassDisplayNames = {
   'extra_special': 'Extra Special (Alba / C5)',
@@ -27,34 +22,17 @@ const Map<String, String> kClassDisplayNames = {
   'low_quality': 'Low Quality (H2 / Quillings)',
 };
 
-const double kTemperature = 1.4573651344965806; // Exp21 provisional calibration
-const double kGateThreshold = 0.52; // Confidence acceptance gate
 const String kInputName = 'images';
 const String kModelAssetPath = 'assets/models/frozen_yolov8s_fp32_384.onnx';
 
-class Result {
-  final String label;
-  final double confidence;
-  final List<double> probs;
-  final int preprocessMs;
-  final int inferenceMs;
-  final int totalMs;
-  final bool accepted;
-  final String imageFingerprint;
-
-  Result({
-    required this.label,
-    required this.confidence,
-    required this.probs,
-    required this.preprocessMs,
-    required this.inferenceMs,
-    required this.totalMs,
-    required this.accepted,
-    required this.imageFingerprint,
-  });
-}
-
 class EdgeEngine {
+  bool biasEnabled = false;
+  double selectedBias = extraSpecialBias;
+  String modelVersion = 'unidentified';
+  String modelSha256 = '';
+  bool outputsProbabilities = true;
+  bool verifiedCleanModel = false;
+
   OnnxRuntime? _runtimeInstance;
   OnnxRuntime get _runtime => _runtimeInstance ??= OnnxRuntime();
   OrtSession? _session;
@@ -89,10 +67,46 @@ class EdgeEngine {
         'Please ensure "frozen_yolov8s_fp32_384.onnx" is present in "assets/models/".',
       );
     }
-    _session = await _runtime.createSessionFromAsset(kModelAssetPath);
+    final bytes = await rootBundle.load(kModelAssetPath);
+    modelSha256 = sha256.convert(bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes)).toString();
+    // Bind calibration to the exact model, so replacing an asset cannot silently
+    // carry a validation-selected correction over to a different experiment.
+    final manifest = jsonDecode(await rootBundle.loadString('assets/models/deployment_manifest.json')) as Map<String, dynamic>;
+    if (manifest['model_sha256'] != modelSha256 ||
+        manifest['input_name'] != kInputName ||
+        manifest['class_order'].toString() != kClasses.toString()) {
+      throw StateError('Deployment manifest does not match the bundled model. Verify its identity and class order.');
+    }
+    final bias = manifest['extra_special_bias'];
+    if (bias is! num || !bias.isFinite || bias.abs() > 20) {
+      throw StateError('Invalid deployment ES bias.');
+    }
+    selectedBias = bias.toDouble();
+    modelVersion = manifest['model_version'] as String;
+    outputsProbabilities = manifest['output_type'] == 'probabilities';
+    if (!outputsProbabilities && manifest['output_type'] != 'logits') {
+      throw StateError('Deployment output type must be logits or probabilities.');
+    }
+    verifiedCleanModel = manifest['dataset'] == 'clean_ceylon_cinnamon';
+    biasEnabled = verifiedCleanModel && manifest['bias_default_enabled'] == true;
+    final options = OrtSessionOptions(
+      providers: [kIsWeb ? OrtProvider.WEB_ASSEMBLY : OrtProvider.CPU],
+    );
+    // Flutter Web serves declared assets under an additional assets/ prefix;
+    // the plugin forwards web URLs directly rather than resolving asset keys.
+    final session = kIsWeb
+        ? await _runtime.createSession('assets/$kModelAssetPath', options: options)
+        : await _runtime.createSessionFromAsset(kModelAssetPath, options: options);
+    if (session.inputNames.toString() != '[images]' || session.outputNames.toString() != '[output0]') {
+      await session.close();
+      throw StateError('Unexpected model input/output names.');
+    }
+    _session = session;
   }
 
   Float32List _tensor(img.Image source) {
+    // Match training geometry and channel scale: stretching bark or changing
+    // padding/normalization would shift the classifier's input distribution.
     final oriented = img.bakeOrientation(source);
     final ratio = math.min(384 / oriented.width, 384 / oriented.height);
     final w = math.max(1, (oriented.width * ratio).round());
@@ -138,6 +152,7 @@ class EdgeEngine {
       );
     }
 
+    final useBias = biasEnabled;
     final totalTimer = Stopwatch()..start();
     final prepTimer = Stopwatch()..start();
 
@@ -150,8 +165,8 @@ class EdgeEngine {
       throw StateError('Image bytes required for Web inference.');
     }
 
-    // Compute unique 16-char SHA-256 fingerprint for accurate image tracking
-    final fingerprint = sha256.convert(bytes).toString().substring(0, 16);
+    // Keep the full SHA-256 image identity for deduplicated research evaluation
+    final fingerprint = sha256.convert(bytes).toString();
 
     final decoded = img.decodeImage(bytes);
     if (decoded == null) {
@@ -164,12 +179,19 @@ class EdgeEngine {
     final ortInput = await OrtValue.fromList(nchw.toList(), [1, 3, 384, 384]);
     final inferTimer = Stopwatch()..start();
 
+    Map<String, OrtValue>? output;
     try {
-      final output = await _session!.run({kInputName: ortInput});
+      output = await _session!.run({kInputName: ortInput});
       if (output.values.isEmpty) {
         throw StateError('ONNX model returned empty output tensor.');
       }
-      final raw = await output.values.first.asList();
+      final tensor = output['output0'];
+      if (tensor == null || tensor.shape.toString() != '[1, 4]') {
+        throw StateError('Expected model output0 shape [1, 4].');
+      }
+      final raw = await tensor.asList();
+      inferTimer.stop();
+      final postTimer = Stopwatch()..start();
       final values = _flatten(raw);
       if (values.length != 4) {
         throw StateError(
@@ -177,41 +199,32 @@ class EdgeEngine {
         );
       }
 
-      // Check if output is raw logits or probabilities
-      final alreadyProbs = values.every((v) => v >= 0 && v <= 1) &&
-          (values.reduce((a, b) => a + b) - 1.0).abs() < 0.02;
-      final logits = alreadyProbs
-          ? values.map((v) => math.log(math.max(v, 1e-12))).toList()
-          : values;
-
-      final maxLogit = logits.reduce(math.max);
-      final expv = logits.map((v) => math.exp((v - maxLogit) / kTemperature)).toList();
-      final sumExp = expv.reduce((a, b) => a + b);
-      final probabilities = expv.map((v) => v / sumExp).toList();
-
-      var topIndex = 0;
-      for (var i = 1; i < 4; i++) {
-        if (probabilities[i] > probabilities[topIndex]) {
-          topIndex = i;
-        }
-      }
-
-      final inferMs = inferTimer.elapsedMilliseconds;
-      final totalMs = totalTimer.elapsedMilliseconds;
-      final confidence = probabilities[topIndex];
-
+      // The checked deployment graph ends in Softmax. Preserve its original
+      // probabilities; the old experiment's temperature must not be reused.
+      final original = modelProbabilities(values, outputsProbabilities: outputsProbabilities);
+      final corrected = applyExtraSpecialBias(original, bias: selectedBias);
+      postTimer.stop();
+      totalTimer.stop();
       return Result(
-        label: kClasses[topIndex],
-        confidence: confidence,
-        probs: probabilities,
+        rawProbs: original,
+        correctedProbs: corrected,
+        biasEnabled: useBias,
+        bias: selectedBias,
+        modelVersion: modelVersion,
+        modelSha256: modelSha256,
+        runtimePlatform: kIsWeb ? 'web' : defaultTargetPlatform.name,
+        inferenceProvider: kIsWeb ? 'WASM' : 'CPU',
         preprocessMs: prepMs,
-        inferenceMs: inferMs,
-        totalMs: totalMs,
-        accepted: confidence >= kGateThreshold,
+        inferenceMs: inferTimer.elapsedMilliseconds,
+        postprocessingMs: postTimer.elapsedMilliseconds,
+        totalMs: totalTimer.elapsedMilliseconds,
         imageFingerprint: fingerprint,
       );
     } finally {
-      ortInput.dispose();
+      for (final tensor in output?.values ?? <OrtValue>[]) {
+        await tensor.dispose();
+      }
+      await ortInput.dispose();
     }
   }
 
@@ -233,7 +246,7 @@ class CinnamonApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Cinnamon Edge AI',
+      title: 'CinnaGrade AI',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -280,14 +293,12 @@ class _CinnamonHomeState extends State<CinnamonHome> {
   String? _modelLoadError;
 
   String _expertGrade = '';
-  int _evaluatedCount = 0;
-  int _correctCount = 0;
+  final ResearchEvaluation _evaluation = ResearchEvaluation();
+  final Set<String> _savedPredictions = {};
   int _savedRowCount = 0;
   String? _csvFilePath;
 
-  final List<String> _csvRows = [
-    'timestamp_utc,image_fingerprint,image,runtime_mode,grade,confidence,accepted,preprocess_ms,inference_ms,total_ms,expert_grade,is_correct,prob_extra,prob_high,prob_low,prob_medium'
-  ];
+  final List<String> _csvRows = [Result.csvHeader];
 
   @override
   void initState() {
@@ -375,7 +386,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
       Future.delayed(const Duration(milliseconds: 650), () {
         if (mounted && _isProcessing) {
           setState(() {
-            _scanStatusText = 'Calibrating Temperature (T=1.457) & Gate...';
+            _scanStatusText = 'Validating probabilities and applying selected ES correction...';
             _scanProgress = 0.95;
           });
         }
@@ -417,35 +428,16 @@ class _CinnamonHomeState extends State<CinnamonHome> {
   Future<void> _savePrediction() async {
     if (_result == null || (_imagePath == null && _imageBytes == null)) return;
     final r = _result!;
-    final hasExpertVerification = _expertGrade.isNotEmpty;
-    final isCorrect = hasExpertVerification ? (_expertGrade == r.label ? 1 : 0) : null;
-
-    if (hasExpertVerification) {
-      _evaluatedCount++;
-      if (isCorrect == 1) _correctCount++;
+    // Repeated taps must not masquerade as independent research samples.
+    final saveKey = '${r.timestamp.toIso8601String()}:${r.imageFingerprint}:${r.biasEnabled}:$_expertGrade';
+    if (!_savedPredictions.add(saveKey)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This prediction and expert label are already saved.')));
+      return;
     }
-
-    String esc(String s) => '"${s.replaceAll('"', '""')}"';
-    final filename = _imageName ??
-        (_imagePath != null
-            ? _imagePath!.split(RegExp(r'[/\\]')).last
-            : 'image.png');
-
-    _csvRows.add([
-      esc(DateTime.now().toUtc().toIso8601String()),
-      esc(r.imageFingerprint),
-      esc(filename),
-      'REAL_ONNX_RUNTIME',
-      esc(r.label),
-      r.confidence.toStringAsFixed(6),
-      r.accepted,
-      r.preprocessMs.toString(),
-      r.inferenceMs.toString(),
-      r.totalMs.toString(),
-      esc(_expertGrade),
-      isCorrect?.toString() ?? '',
-      ...r.probs.map((v) => v.toStringAsFixed(6)),
-    ].join(','));
+    _evaluation.record(r, _expertGrade);
+    final filename = _imageName ?? 'image.png';
+    _csvRows.add(r.csvRow(filename, expertGrade: _expertGrade));
 
     _savedRowCount++;
 
@@ -506,7 +498,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
         );
         await Share.shareXFiles(
           [xFile],
-          text: 'Cinnamon Edge Research Predictions (Field Trial)',
+          text: 'CinnaGrade AI Research Predictions (Field Trial)',
           fileNameOverrides: [fileName],
         );
 
@@ -587,7 +579,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
         );
         await Share.shareXFiles(
           [xFile],
-          text: 'Cinnamon Edge Research Predictions (Field Trial)',
+          text: 'CinnaGrade AI Research Predictions (Field Trial)',
           fileNameOverrides: [fileName],
         );
         return;
@@ -602,7 +594,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
 
       await Share.shareXFiles(
         [XFile(_csvFilePath!)],
-        text: 'Cinnamon Edge Research Predictions (Field Trial)',
+        text: 'CinnaGrade AI Research Predictions (Field Trial)',
       );
     } catch (e) {
       if (mounted) {
@@ -773,7 +765,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Cinnamon Edge AI',
+                  'CinnaGrade AI',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -847,7 +839,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
                               ),
                               const SizedBox(width: 6),
                               const Text(
-                                'OFFLINE READY (REAL ONNX)',
+                                kIsWeb ? 'WEB ONNX READY' : 'OFFLINE READY (REAL ONNX)',
                                 style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.bold,
@@ -946,6 +938,17 @@ class _CinnamonHomeState extends State<CinnamonHome> {
           ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         children: [
+          SwitchListTile.adaptive(
+            title: const Text('Extra Special Correction'),
+            subtitle: Text('ES log-bias = ${_engine.selectedBias}. ${_engine.biasEnabled ? "ON" : "OFF"}. Batch records retain the setting used at inference.'),
+            value: _engine.biasEnabled,
+            onChanged: !_isModelLoaded || _isProcessing ? null : (enabled) {
+              setState(() {
+                _engine.biasEnabled = enabled;
+                _result = _result?.withBiasEnabled(enabled);
+              });
+            },
+          ),
           // Model loading / error banner
           if (_isModelLoading) ...[
             Container(
@@ -1260,7 +1263,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
                           const Icon(Icons.verified, size: 13, color: Color(0xFF2E7D32)),
                           const SizedBox(width: 5),
                           Text(
-                            'REAL_ONNX_RUNTIME (Fingerprint: ${_result!.imageFingerprint})',
+                            'REAL_ONNX_RUNTIME (Fingerprint: ${_result!.imageFingerprint.substring(0, 16)})',
                             style: const TextStyle(
                               fontSize: 10.5,
                               fontWeight: FontWeight.bold,
@@ -1272,6 +1275,10 @@ class _CinnamonHomeState extends State<CinnamonHome> {
                       ),
                     ),
 
+                    Text('Original: ${kClassDisplayNames[_result!.rawLabel]} — ${(_result!.rawConfidence * 100).toStringAsFixed(1)}%'),
+                    Text('Corrected: ${kClassDisplayNames[_result!.correctedLabel]} — ${(_result!.correctedConfidence * 100).toStringAsFixed(1)}%'),
+                    Text('Final grade uses ${_result!.biasEnabled ? "corrected" : "original"} probabilities. Confidence is not accuracy.'),
+                    const SizedBox(height: 8),
                     // Predicted Grade & Confidence Badge
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1375,14 +1382,13 @@ class _CinnamonHomeState extends State<CinnamonHome> {
 
                     // 4-Class Probabilities
                     const Text(
-                      'Class Probability Distribution',
+                      'Class probabilities: Original / Corrected',
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 8),
 
                     ...List.generate(4, (i) {
                       final c = kClasses[i];
-                      final prob = _result!.probs[i];
                       final isTop = c == _result!.label;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 6),
@@ -1401,7 +1407,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
                                   ),
                                 ),
                                 Text(
-                                  '${(prob * 100).toStringAsFixed(1)}%',
+                                  '${(_result!.rawProbs[i] * 100).toStringAsFixed(1)}% / ${(_result!.correctedProbs[i] * 100).toStringAsFixed(1)}%',
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: isTop ? FontWeight.bold : FontWeight.w500,
@@ -1414,7 +1420,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
                             ClipRRect(
                               borderRadius: BorderRadius.circular(4),
                               child: LinearProgressIndicator(
-                                value: prob,
+                                value: _result!.probs[i],
                                 minHeight: 6,
                                 backgroundColor: Colors.grey.shade200,
                                 color: isTop ? const Color(0xFF1B4D3E) : const Color(0xFFB3541E),
@@ -1536,14 +1542,12 @@ class _CinnamonHomeState extends State<CinnamonHome> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Expert-verified Accuracy:',
+                              'Paired evaluation on unique expert-labelled images:',
                               style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              _evaluatedCount == 0
-                                  ? 'No verified samples yet'
-                                  : '${((_correctCount / _evaluatedCount) * 100).toStringAsFixed(1)}% ($_correctCount / $_evaluatedCount)',
+                              _evaluation.report(),
                               style: const TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
@@ -1564,7 +1568,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
                             onPressed: _downloadOrSaveCsv,
                             icon: const Icon(Icons.file_download, size: 18),
                             label: const Text(
-                              'Download CSV',
+                              'Export Research CSV',
                               style: TextStyle(fontWeight: FontWeight.bold),
                             ),
                             style: FilledButton.styleFrom(
@@ -1625,7 +1629,7 @@ class _CinnamonHomeState extends State<CinnamonHome> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Text(
-              'Input: 384x384 NCHW | Temp: 1.457 | Gate: 0.52 | Yolov8s-cls\n'
+              'Input: 384x384 NCHW | ES log-bias: 0.6 | Gate: 0.52 | YOLOv8s-cls\n'
               'Predictions are research estimates. Offline inference runs entirely on-device.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 11, color: Colors.grey.shade500),

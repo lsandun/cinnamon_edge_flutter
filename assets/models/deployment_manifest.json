@@ -1,0 +1,28 @@
+{
+  "model_version": "cinnamon-clean-384-20261019T091120Z",
+  "model_sha256": "1dbf0287f807f605f2650ef7b93cd93c37223eded65b3b3bf6d298d8343ac45c",
+  "dataset": "clean_ceylon_cinnamon",
+  "input_name": "images",
+  "input_shape": [
+    1,
+    3,
+    384,
+    384
+  ],
+  "output_name": "output0",
+  "output_shape": [
+    1,
+    4
+  ],
+  "output_type": "probabilities",
+  "class_order": [
+    "extra_special",
+    "high_quality",
+    "low_quality",
+    "medium_quality"
+  ],
+  "extra_special_bias": 0.6,
+  "bias_default_enabled": true,
+  "temperature": 1.0,
+  "note": "Bias selected on validation per deployment instructions; not embedded in ONNX. No reference prediction fixtures supplied."
+}

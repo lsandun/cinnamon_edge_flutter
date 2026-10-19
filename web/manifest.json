@@ -1,6 +1,6 @@
 {
-    "name": "cinnamon_edge",
-    "short_name": "cinnamon_edge",
+    "name": "CinnaGrade AI",
+    "short_name": "CinnaGrade AI",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
