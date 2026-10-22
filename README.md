@@ -27,7 +27,7 @@ The latest supplied log reports two separate problems: plugins require **NDK 28.
 sdkmanager.bat "ndk;28.2.13676358"
 ```
 
-The Gradle daemon previously allowed an 8 GB heap plus 4 GB metaspace, in addition to Flutter, native tools, and Kotlin. The checked-in defaults now cap the heap at 2 GB, metaspace at 1 GB, Kotlin's separate heap at 512 MB, and Gradle workers at two. These reduce memory pressure; the original Java crash cause is not established without the fatal-error report. No Gradle/Kotlin warning suppression or validation bypass is enabled. The isolated Android configuration check passed with the corrected NDK setting, a measured daemon maximum heap of 2,147,483,648 bytes, and a worker limit of two. ES-bias unit checks also passed. This validates the applied configuration, not NDK installation, the complete Flutter APK build, or the Windows JVM crash fix.
+The Gradle daemon previously allowed an 8 GB heap plus 4 GB metaspace, in addition to Flutter, native tools, and Kotlin. The checked-in defaults now cap the heap at 2 GB, metaspace at 1 GB, and Gradle workers at two. Kotlin now compiles inside the same memory-limited Gradle process instead of starting a separate compiler daemon. The supplied fatal-error report confirmed a native-memory allocation failure on a machine with about 7 GB RAM while running with the previous 8 GB heap / 4 GB metaspace limits. The smaller limits reduce memory pressure; they do not guarantee that every future memory error is resolved. No Gradle/Kotlin warning suppression or validation bypass is enabled. The isolated Android configuration check passed with the corrected NDK setting, a measured daemon maximum heap of 2,147,483,648 bytes, and a worker limit of two. ES-bias unit checks also passed. This validates the applied configuration, not NDK installation, the complete Flutter APK build, or the Windows JVM crash fix.
 
 After pulling the update, stop existing daemons for this Gradle version before rebuilding:
 
@@ -40,6 +40,33 @@ if (Test-Path .\android\gradlew.bat) {
 flutter pub get
 flutter build apk --release
 ```
+
+### Kotlin incremental-cache registration failure
+
+The latest failure is `:flutter_onnxruntime:compileReleaseKotlin`: `Could not close incremental caches` with `Storage ... is already registered`. Its stack trace enters Kotlin's daemon and incremental cache code. This does not identify an error in the app's Dart prediction logic, and another NDK/AGP upgrade is not the targeted fix.
+
+`android/gradle.properties` now sets `kotlin.incremental=false` and `kotlin.compiler.execution.strategy=in-process`. This bypasses the failing incremental compiler-cache path and avoids a separate Kotlin daemon, while preserving compilation checks and the current plugin versions. Kotlin source changes require full recompilation, so subsequent Kotlin builds may be slower. Gradle's ordinary task up-to-date checks still apply.
+
+Validation: an isolated JVM fixture compiled using Gradle 9.1.0, Kotlin 2.3.20, JDK 21, and the repository's Gradle properties. Both compiler runs reported `incremental=false` and `IN_PROCESS`. After changing the source, the second compilation produced and executed the updated class; no `caches-jvm` tables were generated. ES-bias unit checks also passed. This is a Linux JVM compiler smoke check, not a reproduction of the Windows failure or a complete Flutter Android APK build.
+
+For the first retry after this update, close this project's IDE/debug session to release files, pull the update, stop old Gradle daemons, and discard the generated project caches once:
+
+```powershell
+git pull --ff-only origin main
+if (Test-Path .\android\gradlew.bat) {
+    Push-Location .\android
+    .\gradlew.bat --stop
+    Pop-Location
+}
+flutter clean
+if (Test-Path .\android\.gradle) {
+    Remove-Item -LiteralPath .\android\.gradle -Recurse -Force -ErrorAction Stop
+}
+flutter pub get
+flutter build apk --release
+```
+
+If a cleanup reports a locked file, release the process using this checkout before continuing. These commands target generated files in this checkout; they preserve model assets, source files, downloaded package dependencies, and global Gradle distributions.
 
 There is no need to repeat `flutter clean` on every retry. If it reports a locked `.dart_tool`, stop this project's running/debug session and close the editor using it before cleaning. The lock warning in the supplied log did not prevent `flutter pub get` from completing.
 
