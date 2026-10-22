@@ -9,8 +9,8 @@ android {
     namespace = "com.example.cinnamon_edge"
     compileSdk = flutter.compileSdkVersion
 
-    // Retain the NDK revision selected for this Android deployment.
-    ndkVersion = "27.0.12077973"
+    // Match the highest NDK revision required by the resolved native plugins.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

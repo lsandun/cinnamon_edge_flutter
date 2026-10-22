@@ -17,7 +17,37 @@ flutter pub get
 flutter build apk --release
 ```
 
-Allow the Gradle command to finish. The first build after changing toolchains may spend time downloading Gradle, Maven dependencies, SDK/NDK components, and compiling plugins. `Running Gradle task 'assembleRelease'...` and support/deprecation warnings alone do not establish a build failure. The supplied follow-up log ended with `Terminate batch job (Y/N)? y`, which indicates an interrupted build. A completed build reports either its APK output or a concrete failure.
+Allow the Gradle command to finish. The first build after changing toolchains may spend time downloading Gradle, Maven dependencies, SDK/NDK components, and compiling plugins. `Running Gradle task 'assembleRelease'...` and compatibility warnings alone do not establish a failure. A completed build reports either its APK output or a concrete failure.
+
+### NDK mismatch and Gradle daemon crash
+
+The latest supplied log reports two separate problems: plugins require **NDK 28.2.13676358**, while the app previously pinned 27.0.12077973; the Java process then crashed and wrote `android/hs_err_pid15408.log`. The app now selects the required NDK explicitly. Install **NDK (Side by side) 28.2.13676358** using Android Studio's SDK Manager (SDK Tools > Show Package Details), and accept any SDK licenses. If the installed SDK command-line tools are on PATH, the equivalent is:
+
+```powershell
+sdkmanager.bat "ndk;28.2.13676358"
+```
+
+The Gradle daemon previously allowed an 8 GB heap plus 4 GB metaspace, in addition to Flutter, native tools, and Kotlin. The checked-in defaults now cap the heap at 2 GB, metaspace at 1 GB, Kotlin's separate heap at 512 MB, and Gradle workers at two. These reduce memory pressure; the original Java crash cause is not established without the fatal-error report. No Gradle/Kotlin warning suppression or validation bypass is enabled. The isolated Android configuration check passed with the corrected NDK setting, a measured daemon maximum heap of 2,147,483,648 bytes, and a worker limit of two. ES-bias unit checks also passed. This validates the applied configuration, not NDK installation, the complete Flutter APK build, or the Windows JVM crash fix.
+
+After pulling the update, stop existing daemons for this Gradle version before rebuilding:
+
+```powershell
+if (Test-Path .\android\gradlew.bat) {
+    Push-Location .\android
+    .\gradlew.bat --stop
+    Pop-Location
+}
+flutter pub get
+flutter build apk --release
+```
+
+There is no need to repeat `flutter clean` on every retry. If it reports a locked `.dart_tool`, stop this project's running/debug session and close the editor using it before cleaning. The lock warning in the supplied log did not prevent `flutter pub get` from completing.
+
+If Java crashes again, retain the new `android/hs_err_pid*.log` and the referenced Gradle daemon log before retrying. The fatal-error report's opening section (JRE version, problematic frame, exception or allocation failure) distinguishes native-memory exhaustion from a JVM/native-library crash. A remaining daemon crash must not be labelled fixed merely because the NDK mismatch is resolved. Custom settings in your user `.gradle/gradle.properties` can override repository memory settings. To capture a diagnostic build with visible progress:
+
+```powershell
+flutter build apk --release -v 2>&1 | Tee-Object -FilePath android-build.log
+```
 
 A successful build writes `build\app\outputs\flutter-apk\app-release.apk`. `flutter pub get` may update local package resolutions to match your installed Flutter SDK. The Android SDK, platform/build tools, and any NDK requested by Flutter/plugins must be installed and their licenses accepted. Use `flutter doctor -v` to identify missing local prerequisites. Do not use `--android-skip-build-dependency-validation` as the fix.
 
@@ -25,7 +55,7 @@ Version requirements were checked against [Flutter 3.47.7's dependency validator
 
 Validation of this update: the Gradle 9.1.0 archive passed its official SHA-256 check and ran on JDK 21. An isolated Gradle task loaded the actual AGP 9.0.1 and Kotlin 2.3.20 plugins successfully. A second isolated Android application configuration, derived from the app Gradle script with Flutter values supplied as constants, successfully applied both plugins and the Java/Kotlin 17 DSL. ES-bias unit checks passed. This does not compile the actual Flutter application or validate an APK/device.
 
-The compatibility switches above emit AGP/Kotlin deprecation warnings about a future migration; those warnings may remain and are not build failures. This update addresses the three version-support warnings in the supplied log without hiding warnings. The existing NDK 27.0.12077973 and minimum Android SDK 24 settings from your latest commit are retained.
+The compatibility switches above emit AGP/Kotlin deprecation warnings about a future migration; those warnings may remain and are not build failures. This update addresses the three version-support warnings in the supplied log without hiding warnings. The minimum Android SDK remains 24. The required native toolchain is NDK 28.2.13676358, matching the resolved Flutter/native plugins.
 
 A complete cloud APK build remains unverified: downloading the Flutter 3.47.7 Dart SDK was denied by the cloud proxy with HTTP 403, and a complete Android platform SDK is not installed. Run the commands above on your configured Windows machine and let the build complete.
 
