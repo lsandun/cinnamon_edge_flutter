@@ -4,7 +4,9 @@ The current repository includes the clean-dataset ONNX model and SHA-bound deplo
 
 ## Android release builds with Flutter 3.47.7
 
-The Android build configuration uses Gradle **8.14.3**, Android Gradle Plugin (AGP) **8.11.1**, and Kotlin Gradle Plugin **2.2.20**. These meet Flutter 3.47.7's minimum supported versions (8.14.0 / 8.11.1 / 2.2.20). Use JDK **17 or 21** for this build configuration. The Gradle distribution is pinned with its official SHA-256 checksum.
+The Android build configuration uses Gradle **9.1.0**, Android Gradle Plugin (AGP) **9.0.1**, and Kotlin Gradle Plugin **2.3.20**, matching Flutter 3.47.7's recommended versions in its dependency validator. Use JDK **17 or 21**. The Gradle distribution is pinned with its official SHA-256 checksum.
+
+AGP 9 changes both the Android DSL and Kotlin integration. The project uses `android.newDsl=false` and `android.builtInKotlin=false`, following the Flutter 3.47.7 app template's compatibility settings for Flutter/native plugins. The explicit Kotlin plugin remains enabled. Java and Kotlin bytecode targets both use 17; Kotlin uses the typed `compilerOptions` DSL instead of deprecated `kotlinOptions`. These switches retain supported plugin interfaces; they do not bypass Flutter's build dependency validation.
 
 From PowerShell in your existing checkout:
 
@@ -15,13 +17,17 @@ flutter pub get
 flutter build apk --release
 ```
 
-A successful build writes `build\app\outputs\flutter-apk\app-release.apk`. `flutter pub get` may update local package resolutions to match your installed Flutter SDK. The Android SDK, platform/build tools, and any NDK requested by Flutter/plugins must be installed and their licenses accepted. Use `flutter doctor -v` to identify missing local prerequisites.
+Allow the Gradle command to finish. The first build after changing toolchains may spend time downloading Gradle, Maven dependencies, SDK/NDK components, and compiling plugins. `Running Gradle task 'assembleRelease'...` and support/deprecation warnings alone do not establish a build failure. The supplied follow-up log ended with `Terminate batch job (Y/N)? y`, which indicates an interrupted build. A completed build reports either its APK output or a concrete failure.
 
-The failure saying Gradle 8.12 is below Flutter's supported minimum is fixed by the checked-in wrapper properties; reinstalling Flutter or running `flutter pub add --dev flutter_launcher_icons` does not fix it. Do not use `--android-skip-build-dependency-validation` as the fix. The additional AGP 9/new DSL hint in the supplied log is generic: this project remains on AGP 8.11.1, so it does not require an AGP 9 migration or `android.newDsl` opt-out.
+A successful build writes `build\app\outputs\flutter-apk\app-release.apk`. `flutter pub get` may update local package resolutions to match your installed Flutter SDK. The Android SDK, platform/build tools, and any NDK requested by Flutter/plugins must be installed and their licenses accepted. Use `flutter doctor -v` to identify missing local prerequisites. Do not use `--android-skip-build-dependency-validation` as the fix.
 
-Validation of this update: the Gradle 8.14.3 distribution passed SHA-256 verification and ran on JDK 21; an isolated Gradle task resolved and loaded the actual AGP 8.11.1 and Kotlin 2.2.20 plugins successfully. The existing ES-bias unit checks also passed. This checks toolchain resolution, not compilation of the Android application. Flutter may still show advance warnings recommending newer major versions; the selected versions meet its hard minimums while keeping the AGP 8 DSL.
+Version requirements were checked against [Flutter 3.47.7's dependency validator](https://github.com/flutter/flutter/blob/3.47.7/packages/flutter_tools/gradle/src/main/kotlin/DependencyVersionChecker.kt), [compatibility tables](https://github.com/flutter/flutter/blob/3.47.7/packages/flutter_tools/lib/src/android/gradle_utils.dart), and the official [Gradle properties template](https://github.com/flutter/flutter/blob/3.47.7/packages/flutter_tools/templates/app/android.tmpl/gradle.properties.tmpl). This update replaces the previously supported 8.14.3 / 8.11.1 / 2.2.20 combination to address Flutter's advance support warnings.
 
-Version requirements were checked against [Flutter 3.47.7's dependency validator](https://github.com/flutter/flutter/blob/3.47.7/packages/flutter_tools/gradle/src/main/kotlin/DependencyVersionChecker.kt) and [its Gradle/Kotlin/AGP compatibility tables](https://github.com/flutter/flutter/blob/3.47.7/packages/flutter_tools/lib/src/android/gradle_utils.dart). A cloud configuration check is not an Android APK/device validation; this cloud machine currently has no Android SDK.
+Validation of this update: the Gradle 9.1.0 archive passed its official SHA-256 check and ran on JDK 21. An isolated Gradle task loaded the actual AGP 9.0.1 and Kotlin 2.3.20 plugins successfully. A second isolated Android application configuration, derived from the app Gradle script with Flutter values supplied as constants, successfully applied both plugins and the Java/Kotlin 17 DSL. ES-bias unit checks passed. This does not compile the actual Flutter application or validate an APK/device.
+
+The compatibility switches above emit AGP/Kotlin deprecation warnings about a future migration; those warnings may remain and are not build failures. This update addresses the three version-support warnings in the supplied log without hiding warnings. The existing NDK 27.0.12077973 and minimum Android SDK 24 settings from your latest commit are retained.
+
+A complete cloud APK build remains unverified: downloading the Flutter 3.47.7 Dart SDK was denied by the cloud proxy with HTTP 403, and a complete Android platform SDK is not installed. Run the commands above on your configured Windows machine and let the build complete.
 
 The historical setup notes below refer to the earlier source ZIP. Their missing-model warning and temperature calibration do not describe the current bundled deployment.
 
