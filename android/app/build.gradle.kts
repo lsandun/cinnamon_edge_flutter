@@ -8,7 +8,9 @@ plugins {
 android {
     namespace = "com.example.cinnamon_edge"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    
+    // 1. මෙතන flutter.ndkVersion වෙනුවට අලුත් version එක දැම්මා
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -24,7 +26,10 @@ android {
         applicationId = "com.example.cinnamon_edge"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        
+        // 2. මෙතන flutter.minSdkVersion වෙනුවට 24 දැම්මා
+        minSdk = 24
+        
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
